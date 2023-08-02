@@ -1,6 +1,6 @@
 import numpy as np
 import sklearn
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, RobustScaler
 import tensorflow
 import pandas as pd
 # from tensorflow.keras.utils.generic_utils import get_custom_objects
@@ -14,17 +14,19 @@ from datetime import timedelta
 
 def create_dataset(dataset,look_back):
     dataX,dataY= [],[]
+    print("create",dataset)
     for i in range(len(dataset)-look_back-1):
         a=dataset[i:i+look_back,0]
         dataX.append(a)
         dataY.append(dataset[i+look_back,0])
-    return np.asanyarray(dataX),np.asanyarray(dataY)
+    print("val",np.array(dataX).shape)
+    return np.array(dataX),np.array(dataY)
 #print(create_dataset([1,2,3,4,5],2))
 
 def future_values(df,model,scaler,look_back,column,test):
     future=50
     next_day=[]
-
+    #df=df.iloc[::-1]
     for i in range(future):
         ws=test[-look_back:]
         ws=np.reshape(ws,(1,1,look_back))
@@ -36,8 +38,8 @@ def future_values(df,model,scaler,look_back,column,test):
 
     test=np.asanyarray([scaler.inverse_transform([[i]]) for i in test])
     print(test)
-    df_past=df[['timestamp','CLOSE']]
-    df_past.rename(columns={'CLOSE':f'{column}_ACTUAL'},inplace=True)
+    df_past=df[['timestamp',f'{column}']]
+    df_past.rename(columns={f'{column}':f'{column}_ACTUAL'},inplace=True)
     df_past['timestamp']=pd.to_datetime(df_past['timestamp'])
     df_past[f'{column}_FORECAST']=np.nan
     df_past[f'{column}_FORECAST'].iloc[-1]=df_past[f'{column}_ACTUAL'].iloc[-1]
@@ -56,16 +58,16 @@ def future_values(df,model,scaler,look_back,column,test):
     #df_past=df_past.sort_values(by="timestamp",ascending=False)
     df_past.to_csv("df_past.csv")
     plt.figure(figsize=(10,6))
-
-    plt.plot(df_past['timestamp'],df_past['CLOSE_ACTUAL'],color="blue")
-    plt.plot(df_past['timestamp'],df_past['CLOSE_FORECAST'],color="red")
+    df_past=df_past.sort_values(by="timestamp",ascending=True)
+    plt.plot(df_past['timestamp'],df_past[f'{column}_ACTUAL'],color="blue")
+    plt.plot(df_past['timestamp'],df_past[f'{column}_FORECAST'],color="red")
     plt.legend(["Actual","Forecast"])
     plt.savefig("predictions.png")
     # plot=df_past[[f"{column}_ACTUAL",f"{column}_FORECAST"]].plot(title="predictions")
     # fig=plot.get_figure()
     # fig.savefig('predictions.png')
 def future_forecasts(df,model,scaler,look_back,column,test):
-    future=50
+    future=500
     next_day=[]
 
     for i in range(future):
@@ -79,21 +81,21 @@ def future_forecasts(df,model,scaler,look_back,column,test):
 
     test=np.asanyarray([scaler.inverse_transform([[i]]) for i in test])
     print(test)
-    df_past=df[['timestamp','CLOSE']]
-    df_past.rename(columns={'CLOSE':f'{column}_ACTUAL'},inplace=True)
+    df_past=df[['timestamp',f'{column}']]
+    df_past.rename(columns={f'{column}':f'{column}_ACTUAL'},inplace=True)
     df_past['timestamp']=pd.to_datetime(df_past['timestamp'])
     df_past[f'{column}_FORECAST']=np.nan
 
-
+    df_past=df_past.sort_values(by="timestamp",ascending=True)
     l=[]
-    for i in range(1,51):
+    for i in range(1,501):
         l.append(df_past['timestamp'].iloc[-1]+timedelta(days=i))
 
 
     df_future=pd.DataFrame(columns=['timestamp',f'{column}_ACTUAL',f'{column}_FORECAST'])
     df_future['timestamp']=l
     df_future[f'{column}_ACTUAL']=np.nan
-    df_future[f'{column}_FORECAST']=test[-50:].flatten()
+    df_future[f'{column}_FORECAST']=test[-500:].flatten()
     df_future.to_csv("future.csv")
     #results=df_past.append(df_future).set_index('timestamp')
 
@@ -101,8 +103,8 @@ def future_forecasts(df,model,scaler,look_back,column,test):
     #df_past.to_csv("df_past.csv")
     plt.figure(figsize=(10,6))
 
-    plt.plot(df_past['timestamp'],df_past['CLOSE_ACTUAL'],color="blue")
-    plt.plot(df_future['timestamp'],df_future['CLOSE_FORECAST'],color="red")
+    plt.plot(df_past['timestamp'],df_past[f'{column}_ACTUAL'],color="blue")
+    plt.plot(df_future['timestamp'],df_future[f'{column}_FORECAST'],color="red")
     plt.legend(["Actual","Forecast"])
     plt.savefig("Forecasts.png")
     # plot=df_past[[f"{column}_ACTUAL",f"{column}_FORECAST"]].plot(title="predictions")
@@ -131,41 +133,49 @@ def transferred_lstm(trained_model,scaler,new_data):
     history=model.fit(trainX,trainY,epochs=40,shuffle=False,callbacks=[])
 
 
-def lstm(df,dataset):
-    look_back=20
-    scaler=MinMaxScaler(feature_range=(0,1))
+def lstm(df,dataset,column):
+    look_back=100
+    scaler=RobustScaler()
     dataset=scaler.fit_transform(dataset.values)
-    #print(dataset[0:2])
+    print("dataset",dataset)
 
     train_size=int(len(dataset)*0.67)
+    print("Train_size",train_size)
     print(dataset[0:train_size])
     train,test=dataset[0:train_size,:],dataset[train_size:len(dataset),:]
     trainX,trainY=create_dataset(train,look_back)
     testX,testY=create_dataset(test,look_back)
     trainX=np.reshape(trainX,(trainX.shape[0],1,trainX.shape[1]))
     testX=np.reshape(testX,(testX.shape[0],1,testX.shape[1]))
-    model=tensorflow.keras.models.Sequential()
-    model.add(tensorflow.keras.layers.LSTM(64,input_shape=(1,look_back),return_sequences=True))
-    model.add(tensorflow.keras.layers.ReLU())
-    model.add(tensorflow.keras.layers.Dropout(0.2))
-    model.add(tensorflow.keras.layers.LSTM(64,input_shape=(1,look_back),return_sequences=False))
-    model.add(tensorflow.keras.layers.ReLU())
-    model.add(tensorflow.keras.layers.Dropout(0.2))
-    model.add(tensorflow.keras.layers.Dense(1,activation="swish"))
 
-    model.compile(loss=tensorflow.losses.MeanSquaredError(),optimizer=tensorflow.optimizers.Adam(learning_rate=0.001),metrics=['accuracy'])
-    history=model.fit(trainX,trainY,epochs=10,validation_data=(testX,testY))
+    print("this",trainX,trainY)
+    model=tensorflow.keras.models.Sequential()
+    # model.add(tensorflow.keras.layers.LSTM(16,input_shape=(1,look_back),activation="relu",return_sequences=True))
+    # model.add(tensorflow.keras.layers.Dropout(0.2))
+    # model.add(tensorflow.keras.layers.Bidirectional(tensorflow.keras.layers.LSTM(4,input_shape=(1,look_back),return_sequences=True)))
+    # model.add(tensorflow.keras.layers.ReLU())
+    # model.add(tensorflow.keras.layers.Dropout(0.2))
+    model.add(tensorflow.keras.layers.LSTM(64,input_shape=(1,look_back),activation="relu",return_sequences=True))
+    model.add(tensorflow.keras.layers.Dropout(0.2))
+    # model.add(tensorflow.keras.layers.LSTM(64,input_shape=(1,look_back),activation="relu",return_sequences=False))
+    # model.add(tensorflow.keras.layers.Dropout(0.2))
+    model.add(tensorflow.keras.layers.Dense(1,activation=tensorflow.keras.activations.swish))
+
+    model.compile(loss=tensorflow.losses.MeanSquaredError(),optimizer=tensorflow.optimizers.Adam(),metrics=[tensorflow.metrics.MeanSquaredError()])
+    history=model.fit(trainX,trainY,epochs=10,batch_size=10,validation_data=(testX,testY))
     plt.figure(figsize=(10,6))
-    x=np.arange(1,len(history.history['accuracy'])+1,1)
-    plt.plot(x,history.history['accuracy'],color="blue")
-    plt.plot(x,history.history['val_accuracy'],color="red")
-    plt.legend(["accuracy","val_accuracy"])
+    x=np.arange(1,len(history.history['mean_squared_error'])+1,1)
+    plt.plot(x,history.history['mean_squared_error'],color="blue")
+    plt.plot(x,history.history['val_mean_squared_error'],color="red")
+    plt.legend(["mean_squared_error","val_mean_squared_error"])
     plt.savefig("accuracy.png")
+    print("TrainX",trainX)
     train_predict=model.predict(trainX)
     test_predict=model.predict(testX)
-    train_predict=scaler.inverse_transform(train_predict)
+    print("train_predict",train_predict)
+    train_predict=scaler.inverse_transform(train_predict[0])
     trainY=scaler.inverse_transform([trainY])
-    test_predict=scaler.inverse_transform(test_predict)
+    test_predict=scaler.inverse_transform(test_predict[0])
     testY=scaler.inverse_transform([testY])
     trainPredictPlot=np.empty_like(dataset)
     trainPredictPlot[:,:]=np.nan
@@ -178,18 +188,21 @@ def lstm(df,dataset):
     plt.plot(trainPredictPlot)
     plt.plot(testPredictPlot)
     plt.savefig("train_test_predict.png")
-    df_past=df[['timestamp','CLOSE']]
-    results=future_values(df,model,scaler,look_back,'CLOSE',test)
-    future_forecasts(df,model,scaler,look_back,'CLOSE',df['CLOSE'].values)
+    df_past=df[['timestamp',f'{column}']]
+    results=future_values(df,model,scaler,look_back,f'{column}',test)
+    future_forecasts(df,model,scaler,look_back,f'{column}',df[f'{column}'].values)
 
-
+'''
+https://discuss.tensorflow.org/t/keras-nn-shows-0-accuracy/11106
+metrics=['accuracy'] is for a classification problem 
+'''
 
 
 if __name__=='__main__':
-    df=pd.read_csv("ongc.csv")
+    df=pd.read_csv("HistoricalQuotes.csv")
     df=df.iloc[::-1]
-    df.rename(columns={'DATE':'timestamp'},inplace=True)
+    df.rename(columns={'Date':'timestamp'},inplace=True)
     print(df.columns)
-    print(df['CLOSE'].values[-1])
+    print(df[' Close/Last'].values[-1])
 
-    lstm(df,df[['CLOSE']])
+    lstm(df,df[[' Close/Last']],' Close/Last')
